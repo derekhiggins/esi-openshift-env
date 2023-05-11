@@ -1,0 +1,20 @@
+# Set the domain name
+domain=ostest.test.metalkube.org
+
+server=8.8.8.8
+interface=ostestbm
+listen=192.168.111.1
+
+# Assign IP addresses to hosts
+dhcp-range=192.168.111.100,192.168.111.150,255.255.255.0,12h
+
+# Assign DNS entries to hosts
+{% for node in nodes -%}
+dhcp-host={{node["bmmac"]}},{{node["name"]}}.ostest.test.metalkube.org,{{node["ip"]}}
+{% endfor %}
+
+# Add additional DNS entries
+address=/api.ostest.test.metalkube.org/192.168.111.5
+
+# Add a wildcard DNS entry
+address=/.aps.ostest.test.metalkube.org/192.168.111.4

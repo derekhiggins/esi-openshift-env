@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    {% for node in nodes %}
+    {
+      "name": "{{ node['name'] }}",
+      "driver": "ipmi",
+      "resource_class": "baremetal",
+      "driver_info": { "username": "admin", "password": "password", "address": "ipmi://192.168.111.1:623{{loop.index0}}", "deploy_kernel": "http://172.22.0.2/images/ironic-python-agent.kernel", "deploy_ramdisk": "http://172.22.0.2/images/ironic-python-agent.initramfs", "disable_certificate_verification": false },
+      "ports": [
+        {
+          "address": "{{ node['mac'] }}",
+          "pxe_enabled": true
+        }
+      ],
+      "properties": { "local_gb": "50", "cpu_arch": "x86_64", "boot_mode": "legacy" }
+    }{% if not loop.last %},{% endif %}
+   {% endfor %}
+  ]
+}

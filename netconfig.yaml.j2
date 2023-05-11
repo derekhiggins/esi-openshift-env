@@ -1,0 +1,26 @@
+networkConfig:
+  interfaces:
+  - name: eno1
+    type: ethernet
+    state: up
+    ipv4:
+      dhcp: true
+      enabled: true
+    ipv6:
+      enabled: true
+      dhcp: false
+  - name: eno1.{{ bmvlanid }}
+    type: vlan
+    state: up
+    mac-address: "{{ bmmac }}"
+    vlan:
+      base-iface: eno1
+      id: {{ bmvlanid }}
+    ipv4:
+      dhcp: true
+      enabled: true
+  - name: enp2s0
+    type: ethernet
+    state: down
+
+
