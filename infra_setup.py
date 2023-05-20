@@ -59,9 +59,14 @@ def get_or_create_network(conn, network_name, create=True):
         if net["name"] == network_name:
             return net
 
-    # TODO: Add subnet
     if create:
-        return conn.network.create_network(name=network_name, port_security_enabled=False)
+        net = conn.network.create_network(name=network_name, port_security_enabled=False)
+        if "bm" in network_name:
+            # Needs a gateway as libvirt is using 192.168.111.1
+            conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr="192.168.111.0/24", enable_dhcp=False, gateway="192.168.111.254")
+        elif "pr" in network_name:
+            conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr="172.22.0.0/24", enable_dhcp=False)
+        return net
 
 def runcmd(cmd: str) -> (str, int):
     exit_code = 0
@@ -85,6 +90,9 @@ def create_trunk(switch_port, native, tagged):
 
 def attach_trunk(port_uuid, node):
     return runcmd(f'openstack esi node network attach --port "{port_uuid}" {node}')
+
+def deploy(node):
+    return runcmd(f'metalsmith deploy --image centos-image  --ssh-public-key ~/.ssh/id_ed25519.pub --resource-class baremetal --candidate {node} --no-wait')
 
 def manage_trunk(conn, bmnode, bmport, netext, netpr, netbm, trunk_ports):
     switch = bmport["local_link_connection"]["switch_info"]
@@ -157,10 +165,15 @@ def main():
     hex_string = format(int(netbm["provider:segmentation_id"]), '04X')
     # setting the second-least-significant bit of the first octet to mark as locally administered
     # then encode the vlan number and a sequence
-    bmmac_prefix = "03:00:00:" + hex_string[:2] + ':' + hex_string[2:]
+    bmmac_prefix = "02:00:00:" + hex_string[:2] + ':' + hex_string[2:]
+    # TODO: fix a possible dissconnect here between this and the port number in bm.json.j2
+    ipmi_port = 6230
     for i, bmnode in enumerate(provisioning_nodes + master_nodes + worker_nodes):
         bmport = bmports_by_node[bmnode["uuid"]]
         manage_trunk(conn, bmnode, bmport, netext, netpr, netbm, trunk_ports)
+
+        if bmnode["provision_state"] == PROVISION_STATE_AVAILABLE:
+            deploy(bmnode["uuid"])
 
         if bmnode.extra.get(ROLE_FIELD) == "prov":
             continue
@@ -178,10 +191,16 @@ def main():
         with open("resources/vlan-over-prov/%s.yaml"%rnode["name"], "w") as fp:
             fp.write(output_str)
             
+        # Create a vbmc config for each node
+        template = env.get_template('vbmc_config.j2')
+        output_str = template.render(uuid=bmnode["uuid"], ipmiport=str(ipmi_port))
+        ipmi_port += 1
+        try: os.makedirs("resources/vbmc/"+bmnode["uuid"])
+        except: pass
+        with open('resources/vbmc/%s/config'%bmnode["uuid"], "w") as fp:
+            fp.write(output_str)
 
 
-    # TODO: deploy centos on the prov host and assign it a floating ip
-    # metalsmith deploy --image centos-image  --ssh-public-key ~/.ssh/id_rsa.pub --resource-class baremetal --candidate <node>
     # openstack floating ip create --port <port> external
 
 
