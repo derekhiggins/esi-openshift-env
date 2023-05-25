@@ -55,18 +55,28 @@ def allocate_nodes(conn, envname, numworkers):
 
 
 def get_or_create_network(conn, network_name, create=True):
-    for net in conn.network.networks():
-        if net["name"] == network_name:
-            return net
+    net = subnet = None
+    for n in conn.network.networks():
+        if n["name"] == network_name:
+            net=n
+
+    for sn in conn.network.subnets():
+        if sn["name"] == "subnet-"+network_name:
+            subnet=sn
+    
 
     if create:
-        net = conn.network.create_network(name=network_name, port_security_enabled=False)
-        if "bm" in network_name:
-            # Needs a gateway as libvirt is using 192.168.111.1
-            conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr="192.168.111.0/24", enable_dhcp=False, gateway="192.168.111.254")
-        elif "pr" in network_name:
-            conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr="172.22.0.0/24", enable_dhcp=False)
-        return net
+        if not net:
+            net = conn.network.create_network(name=network_name, port_security_enabled=False)
+        if not subnet:
+            if "bm" in network_name:
+                # Needs a gateway as prov host is using 192.168.111.1 
+                subnet = conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr="192.168.111.0/24",
+                    gateway_ip="192.168.111.254", dns_nameservers=["192.168.111.1"],
+                    allocation_pools=[{"start": "192.168.111.20", "end": "192.168.111.100"}])
+            elif "pr" in network_name:
+                subnet = conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr="172.22.0.0/24", enable_dhcp=False)
+    return net, subnet
 
 def runcmd(cmd: str) -> (str, int):
     exit_code = 0
@@ -91,14 +101,15 @@ def create_trunk(switch_port, native, tagged):
 def attach_trunk(port_uuid, node):
     return runcmd(f'openstack esi node network attach --port "{port_uuid}" {node}')
 
-def deploy(node):
-    return runcmd(f'metalsmith deploy --image centos-image  --ssh-public-key ~/.ssh/id_ed25519.pub --resource-class baremetal --candidate {node} --no-wait')
+def deploy(node, trunk_port_name):
+    return runcmd(f'metalsmith deploy --image centos-image  --ssh-public-key ~/.ssh/id_ed25519.pub --resource-class baremetal --candidate {node} --no-wait --port {trunk_port_name}')
 
 def manage_trunk(conn, bmnode, bmport, netext, netpr, netbm, trunk_ports):
     switch = bmport["local_link_connection"]["switch_info"]
     switch_port = bmport["local_link_connection"]["port_id"]
 
     trunk_port_name = f'esi-{switch}-{switch_port}-{netpr["name"]}-trunk-port'
+    bm_port_name = f'esi-{switch}-{switch_port}-{netbm["name"]}-sub-port'
     trunk_name = f"{switch}-{switch_port}"
     native = [netpr["provider:segmentation_id"]]
     tagged = [netbm["provider:segmentation_id"]]
@@ -111,16 +122,12 @@ def manage_trunk(conn, bmnode, bmport, netext, netpr, netbm, trunk_ports):
     print("setting up trunk ", trunk_port_name)
     trunk_port = trunk_ports.get(trunk_port_name)
 
-    attach = False
-
-
     internal_info = bmport.get("internal_info")
     if internal_info:
         bmport_port = internal_info.get("tenant_vif_port_id")
         if bmport_port and trunk_port and bmport_port != trunk_port["id"]:
             print("Attached to the wrong port, detach")
             detach_trunk(bmnode["name"], trunk_port["id"])
-            attach = True
 
     if trunk_port and len(set([subport["segmentation_id"] for subport in trunk_port["trunk_details"]["sub_ports"]]).symmetric_difference(tagged)) > 0:
         print("Deleting", trunk_port_name)
@@ -133,11 +140,8 @@ def manage_trunk(conn, bmnode, bmport, netext, netpr, netbm, trunk_ports):
             create_trunk(trunk_name, "okd", [netpr["name"], netbm["name"]])
         else:
             create_trunk(trunk_name, netpr["name"], [netbm["name"]])
-        attach = True
 
-    if attach:
-        print("Attaching")
-        attach_trunk(trunk_port_name, bmnode["name"])
+    return trunk_port_name, bm_port_name
 
 
 def main():
@@ -148,9 +152,9 @@ def main():
 
     provisioning_nodes, master_nodes, worker_nodes = allocate_nodes(conn, args.envname, args.numworkers)
 
-    netext = get_or_create_network(conn, "okd", False)
-    netpr = get_or_create_network(conn, args.envname + "pr")
-    netbm = get_or_create_network(conn, args.envname + "bm")
+    netext, subnetext = get_or_create_network(conn, "okd", False)
+    netpr, subnetpr = get_or_create_network(conn, args.envname + "pr")
+    netbm, subnetbm = get_or_create_network(conn, args.envname + "bm")
 
     bmports = conn.baremetal.ports(fields=["uuid", "address", "node_uuid", "local_link_connection", "internal_info"])
     bmports_by_node = {port["node_uuid"]: port for port in bmports}
@@ -162,32 +166,29 @@ def main():
     except: pass
 
     rnodes = []
-    hex_string = format(int(netbm["provider:segmentation_id"]), '04X')
-    # setting the second-least-significant bit of the first octet to mark as locally administered
-    # then encode the vlan number and a sequence
-    bmmac_prefix = "02:00:00:" + hex_string[:2] + ':' + hex_string[2:]
     # TODO: fix a possible dissconnect here between this and the port number in bm.json.j2
     ipmi_port = 6230
+    prov_bm_port_name = ''
     for i, bmnode in enumerate(provisioning_nodes + master_nodes + worker_nodes):
         bmport = bmports_by_node[bmnode["uuid"]]
-        manage_trunk(conn, bmnode, bmport, netext, netpr, netbm, trunk_ports)
-
+        trunk_port_name, bm_port_name = manage_trunk(conn, bmnode, bmport, netext, netpr, netbm, trunk_ports)
         if bmnode["provision_state"] == PROVISION_STATE_AVAILABLE:
-            deploy(bmnode["uuid"])
+            deploy(bmnode["uuid"], trunk_port_name)
 
         if bmnode.extra.get(ROLE_FIELD) == "prov":
+            prov_bm_port_name = bm_port_name
+            prov_ext_port_name = trunk_port_name
             continue
 
         rnode = {}
         rnode["name"] = bmnode["name"]
         rnode["mac"] = bmport["address"]
-        rnode["bmmac"] = f"{bmmac_prefix}:{i:02x}"
         rnode["ip"] = f"192.168.111.{20+i}"
         rnodes.append(rnode)
 
         # Create a static net config for each nodes
         template = env.get_template('netconfig.yaml.j2')
-        output_str = template.render(bmvlanid=netbm["provider:segmentation_id"], bmmac=rnode["bmmac"])
+        output_str = template.render(bmvlanid=netbm["provider:segmentation_id"], bmmac=trunk_ports[bm_port_name]["mac_address"])
         with open("resources/vlan-over-prov/%s.yaml"%rnode["name"], "w") as fp:
             fp.write(output_str)
             
@@ -200,8 +201,54 @@ def main():
         with open('resources/vbmc/%s/config'%bmnode["uuid"], "w") as fp:
             fp.write(output_str)
 
+    if not trunk_ports.get("BOOTSTRAP"):
+        # openstack port create --fixed-ip subnet=subnet-okd1bm,ip-address=192.168.111.50 --network okd1bm --mac-address 52:54:00:B0:07:4F BOOTSTRAP 
+        conn.network.create_port(name="BOOTSTRAP", network_id=netbm["id"], mac_address="52:54:00:B0:07:4F", fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': '192.168.111.101' }])
 
-    # openstack floating ip create --port <port> external
+    floating_ips = conn.network.ips(floating=True)
+    for ip in floating_ips:
+        if ip["description"] == "okd1 access":
+            break
+    else:
+        # TODO: find the ID of floating ip network "external"
+        ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description="okd1 access")
+
+    # create the port forwarding rule
+    # TODO: only do once
+    #port_forwarding_rule = conn.network.create_port_forwarding(
+    #    floatingip_id=ip["id"],
+    #    internal_port_id=trunk_ports[prov_ext_port_name]["id"],
+    #    internal_ip_address=trunk_ports[prov_ext_port_name]["fixed_ips"][0]["ip_address"],
+    #    internal_port='22', external_port='22', protocol='tcp'
+    #)
+
+    if not trunk_ports.get("IngressVIP"):
+        conn.network.create_port(name="IngressVIP", network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': '192.168.111.4' }])
+    if not trunk_ports.get("APIVIP"):
+        conn.network.create_port(name="APIVIP", network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': '192.168.111.5' }])
+
+    for ip in floating_ips:
+        if ip["description"] == "okd1 cluster access":
+            break
+    else:
+        # TODO: find the ID of floating ip network "external"
+        ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description="okd1 cluster access")
+
+    
+    # create the port forwarding rules
+    # TODO: only do once
+    #port_forwarding_rule = conn.network.create_port_forwarding(
+    #    floatingip_id=ip["id"],
+    #    internal_port_id=trunk_ports["APIVIP"]["id"],
+    #    internal_ip_address=trunk_ports["APIVIP"]["fixed_ips"][0]["ip_address"],
+    #    internal_port='6443', external_port='6443', protocol='tcp'
+    #)
+    #port_forwarding_rule = conn.network.create_port_forwarding(
+    #    floatingip_id=ip["id"],
+    #    internal_port_id=trunk_ports["IngressVIP"]["id"],
+    #    internal_ip_address=trunk_ports[prov_ext_port_name]["fixed_ips"][0]["ip_address"],
+    #    internal_port='443', external_port='443', protocol='tcp'
+    #)
 
 
     # For create a bm.json file containing each bmnode
@@ -220,6 +267,7 @@ def main():
     with open("resources/vars.sh", "w") as fp:
         fp.write("export VLANID_PR=%s\n"%netpr["provider:segmentation_id"])
         fp.write("export VLANID_BM=%s\n"%netbm["provider:segmentation_id"])
+        fp.write("export PROV_BM_MAC=%s\n"%trunk_ports[prov_bm_port_name]["mac_address"])
         fp.write("export NUM_WORKERS=%s\n"%args.numworkers)
 
 if __name__ == "__main__":
