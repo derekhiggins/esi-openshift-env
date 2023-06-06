@@ -251,17 +251,12 @@ def main():
     #)
 
 
-    # For create a bm.json file containing each bmnode
-    template = env.get_template('bm.json.j2')
-    output_str = template.render(nodes=rnodes)
-    with open("resources/bm.json", "w") as fp:
-        fp.write(output_str)
-
-    # For create a bm.json file containing each bmnode
-    template = env.get_template('dnsmasq.conf.j2')
-    output_str = template.render(nodes=rnodes)
-    with open("resources/dnsmasq.conf", "w") as fp:
-        fp.write(output_str)
+    # create a some files needed on the provisioning host
+    for template_file in [ 'bm.json.j2', 'dnsmasq.conf.j2']:
+        template = env.get_template(template_file)
+        output_str = template.render(nodes=rnodes)
+        with open("resources/"+template_file, "w") as fp:
+            fp.write(output_str)
 
     # some vars 
     with open("resources/vars.sh", "w") as fp:
