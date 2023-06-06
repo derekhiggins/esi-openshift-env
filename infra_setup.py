@@ -162,8 +162,7 @@ def main():
     trunk_ports = {port["name"]: port for port in conn.network.ports() if port["name"]}
 
     env = Environment(loader=FileSystemLoader('.'))
-    try: os.makedirs("resources/vlan-over-prov")
-    except: pass
+    os.makedirs("resources/vlan-over-prov", exist_ok=True)
 
     rnodes = []
     # TODO: fix a possible dissconnect here between this and the port number in bm.json.j2
@@ -196,8 +195,7 @@ def main():
         template = env.get_template('vbmc_config.j2')
         output_str = template.render(uuid=bmnode["uuid"], ipmiport=str(ipmi_port))
         ipmi_port += 1
-        try: os.makedirs("resources/vbmc/"+bmnode["uuid"])
-        except: pass
+        os.makedirs("resources/vbmc/"+bmnode["uuid"], exist_ok=True)
         with open('resources/vbmc/%s/config'%bmnode["uuid"], "w") as fp:
             fp.write(output_str)
 
