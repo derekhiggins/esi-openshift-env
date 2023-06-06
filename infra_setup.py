@@ -22,6 +22,15 @@ def get_ip_address(subnet, index):
     ip_address = str(ip_range[index])
     return ip_address
 
+def get_or_create_fip(description):
+    floating_ips = conn.network.ips(floating=True)
+    for ip in floating_ips:
+        if ip["description"] == description
+            break
+    else:
+        # TODO: find the ID of floating ip network "external"
+        ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description=description)
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("envname", help="name of the environment")
@@ -108,9 +117,6 @@ def delete_trunk(switch_port: str) -> (str, int):
 def create_trunk(switch_port, native, tagged):
     tagged = "".join([f" --tagged-networks {t}" for t in tagged])
     return runcmd(f'openstack esi trunk create --native-network {native} {tagged} "{switch_port}"')
-
-def attach_trunk(port_uuid, node):
-    return runcmd(f'openstack esi node network attach --port "{port_uuid}" {node}')
 
 def deploy(node, trunk_port_name):
     return runcmd(f'metalsmith deploy --image centos-image  --ssh-public-key ~/.ssh/id_ed25519.pub --resource-class baremetal --candidate {node} --no-wait --port {trunk_port_name}')
@@ -211,13 +217,8 @@ def main():
     if not trunk_ports.get("BOOTSTRAP"):
         conn.network.create_port(name="BOOTSTRAP", network_id=netbm["id"], mac_address="52:54:00:B0:07:4F", fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(EXTNETWORK, 101) }])
 
-    floating_ips = conn.network.ips(floating=True)
-    for ip in floating_ips:
-        if ip["description"] == f"{args.envname} access":
-            break
-    else:
-        # TODO: find the ID of floating ip network "external"
-        ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description="{args.envname} access")
+    provip = get_or_create_fip("{args.envname} access")
+    clusterip = get_or_create_fip("{args.envname} cluster access")
 
     # create the port forwarding rule
     # TODO: only do once
@@ -234,14 +235,6 @@ def main():
     api_port_name = f"{args.envname} APIVIP"
     if not trunk_ports.get(api_port_name):
         conn.network.create_port(name=api_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(EXTNETWORK, 5) }])
-
-    for ip in floating_ips:
-        if ip["description"] == "{args.envname} cluster access":
-            break
-    else:
-        # TODO: find the ID of floating ip network "external"
-        ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description="{args.envname} cluster access")
-
 
     # create the port forwarding rules
     # TODO: only do once
