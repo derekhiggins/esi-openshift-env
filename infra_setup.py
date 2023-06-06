@@ -62,7 +62,10 @@ def allocate_nodes(conn, envname, numworkers):
     return roles["prov"], roles["master"], roles["worker"]
 
 
-def get_or_create_network(conn, network_name, create=True):
+def get_or_create_network(conn, name, create=True):
+    network_name = "net-"+name,
+    subnet_name = "subnet-"+name,
+
     net = subnet = None
     for n in conn.network.networks():
         if n["name"] == network_name:
@@ -79,11 +82,11 @@ def get_or_create_network(conn, network_name, create=True):
         if not subnet:
             if "bm" in network_name:
                 # Needs a gateway as prov host is using X.X.X.1
-                subnet = conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr=EXTNETWORK,
+                subnet = conn.network.create_subnet(name=subnet_name, network_id=net["id"], ip_version=4, cidr=EXTNETWORK,
                     gateway_ip=get_ip_address(EXTNETWORK, -2), dns_nameservers=[get_ip_address(EXTNETWORK, 1)],
                     allocation_pools=[{"start": get_ip_address(EXTNETWORK, 20), "end": get_ip_address(EXTNETWORK, 100)}])
             elif "pr" in network_name:
-                subnet = conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr="172.22.0.0/24", enable_dhcp=False)
+                subnet = conn.network.create_subnet(name=subnet_name, network_id=net["id"], ip_version=4, cidr="172.22.0.0/24", enable_dhcp=False)
     return net, subnet
 
 def runcmd(cmd: str) -> (str, int):
@@ -210,11 +213,11 @@ def main():
 
     floating_ips = conn.network.ips(floating=True)
     for ip in floating_ips:
-        if ip["description"] == "okd1 access":
+        if ip["description"] == f"{args.envname} access":
             break
     else:
         # TODO: find the ID of floating ip network "external"
-        ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description="okd1 access")
+        ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description="{args.envname} access")
 
     # create the port forwarding rule
     # TODO: only do once
@@ -225,17 +228,19 @@ def main():
     #    internal_port='22', external_port='22', protocol='tcp'
     #)
 
-    if not trunk_ports.get("IngressVIP"):
-        conn.network.create_port(name="IngressVIP", network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(EXTNETWORK, 4) }])
-    if not trunk_ports.get("APIVIP"):
-        conn.network.create_port(name="APIVIP", network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(EXTNETWORK, 5) }])
+    ingress_port_name = f"{args.envname} IngressVIP"
+    if not trunk_ports.get(ingress_port_name):
+        conn.network.create_port(name=ingress_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(EXTNETWORK, 4) }])
+    api_port_name = f"{args.envname} APIVIP"
+    if not trunk_ports.get(api_port_name):
+        conn.network.create_port(name=api_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(EXTNETWORK, 5) }])
 
     for ip in floating_ips:
-        if ip["description"] == "okd1 cluster access":
+        if ip["description"] == "{args.envname} cluster access":
             break
     else:
         # TODO: find the ID of floating ip network "external"
-        ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description="okd1 cluster access")
+        ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description="{args.envname} cluster access")
 
 
     # create the port forwarding rules
