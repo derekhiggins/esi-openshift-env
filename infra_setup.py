@@ -12,7 +12,7 @@ ENV_FIELD = "envname"
 ROLE_FIELD = "role"
 PROVISION_STATE_AVAILABLE = "available"
 NUM_MASTERS = 3
-
+BASE_IPMI_PORT = 6230
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -165,8 +165,6 @@ def main():
     os.makedirs("resources/vlan-over-prov", exist_ok=True)
 
     rnodes = []
-    # TODO: fix a possible dissconnect here between this and the port number in bm.json.j2
-    ipmi_port = 6230
     prov_bm_port_name = ''
     for i, bmnode in enumerate(provisioning_nodes + master_nodes + worker_nodes):
         bmport = bmports_by_node[bmnode["uuid"]]
@@ -183,6 +181,7 @@ def main():
         rnode["name"] = bmnode["name"]
         rnode["mac"] = bmport["address"]
         rnode["ip"] = f"192.168.111.{20+i}"
+        rnode["ipmiport"] = str(BASE_IPMI_PORT+i)
         rnodes.append(rnode)
 
         # Create a static net config for each nodes
@@ -193,8 +192,7 @@ def main():
             
         # Create a vbmc config for each node
         template = env.get_template('vbmc_config.j2')
-        output_str = template.render(uuid=bmnode["uuid"], ipmiport=str(ipmi_port))
-        ipmi_port += 1
+        output_str = template.render(uuid=bmnode["uuid"], ipmiport=rnode["ipmiport"])
         os.makedirs("resources/vbmc/"+bmnode["uuid"], exist_ok=True)
         with open('resources/vbmc/%s/config'%bmnode["uuid"], "w") as fp:
             fp.write(output_str)
