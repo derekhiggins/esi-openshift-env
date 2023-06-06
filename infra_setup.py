@@ -1,4 +1,5 @@
 import argparse
+import ipaddress
 import subprocess
 import sys
 import os
@@ -13,6 +14,13 @@ ROLE_FIELD = "role"
 PROVISION_STATE_AVAILABLE = "available"
 NUM_MASTERS = 3
 BASE_IPMI_PORT = 6230
+EXTNETWORK = "192.168.111.0/24"
+
+
+def get_ip_address(subnet, index):
+    ip_range = ipaddress.IPv4Network(subnet)
+    ip_address = str(ip_range[index])
+    return ip_address
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -63,17 +71,17 @@ def get_or_create_network(conn, network_name, create=True):
     for sn in conn.network.subnets():
         if sn["name"] == "subnet-"+network_name:
             subnet=sn
-    
+
 
     if create:
         if not net:
             net = conn.network.create_network(name=network_name, port_security_enabled=False)
         if not subnet:
             if "bm" in network_name:
-                # Needs a gateway as prov host is using 192.168.111.1 
-                subnet = conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr="192.168.111.0/24",
-                    gateway_ip="192.168.111.254", dns_nameservers=["192.168.111.1"],
-                    allocation_pools=[{"start": "192.168.111.20", "end": "192.168.111.100"}])
+                # Needs a gateway as prov host is using X.X.X.1
+                subnet = conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr=EXTNETWORK,
+                    gateway_ip=get_ip_address(EXTNETWORK, -2), dns_nameservers=[get_ip_address(EXTNETWORK, 1)],
+                    allocation_pools=[{"start": get_ip_address(EXTNETWORK, 20), "end": get_ip_address(EXTNETWORK, 100)}])
             elif "pr" in network_name:
                 subnet = conn.network.create_subnet(name="subnet-"+network_name, network_id=net["id"], ip_version=4, cidr="172.22.0.0/24", enable_dhcp=False)
     return net, subnet
@@ -180,7 +188,7 @@ def main():
         rnode = {}
         rnode["name"] = bmnode["name"]
         rnode["mac"] = bmport["address"]
-        rnode["ip"] = f"192.168.111.{20+i}"
+        rnode["ip"] = get_ip_address(EXTNETWORK, 20+i)
         rnode["ipmiport"] = str(BASE_IPMI_PORT+i)
         rnodes.append(rnode)
 
@@ -189,7 +197,7 @@ def main():
         output_str = template.render(bmvlanid=netbm["provider:segmentation_id"], bmmac=trunk_ports[bm_port_name]["mac_address"])
         with open("resources/vlan-over-prov/%s.yaml"%rnode["name"], "w") as fp:
             fp.write(output_str)
-            
+
         # Create a vbmc config for each node
         template = env.get_template('vbmc_config.j2')
         output_str = template.render(uuid=bmnode["uuid"], ipmiport=rnode["ipmiport"])
@@ -198,8 +206,7 @@ def main():
             fp.write(output_str)
 
     if not trunk_ports.get("BOOTSTRAP"):
-        # openstack port create --fixed-ip subnet=subnet-okd1bm,ip-address=192.168.111.50 --network okd1bm --mac-address 52:54:00:B0:07:4F BOOTSTRAP 
-        conn.network.create_port(name="BOOTSTRAP", network_id=netbm["id"], mac_address="52:54:00:B0:07:4F", fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': '192.168.111.101' }])
+        conn.network.create_port(name="BOOTSTRAP", network_id=netbm["id"], mac_address="52:54:00:B0:07:4F", fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(EXTNETWORK, 101) }])
 
     floating_ips = conn.network.ips(floating=True)
     for ip in floating_ips:
@@ -219,9 +226,9 @@ def main():
     #)
 
     if not trunk_ports.get("IngressVIP"):
-        conn.network.create_port(name="IngressVIP", network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': '192.168.111.4' }])
+        conn.network.create_port(name="IngressVIP", network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(EXTNETWORK, 4) }])
     if not trunk_ports.get("APIVIP"):
-        conn.network.create_port(name="APIVIP", network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': '192.168.111.5' }])
+        conn.network.create_port(name="APIVIP", network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(EXTNETWORK, 5) }])
 
     for ip in floating_ips:
         if ip["description"] == "okd1 cluster access":
@@ -230,7 +237,7 @@ def main():
         # TODO: find the ID of floating ip network "external"
         ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description="okd1 cluster access")
 
-    
+
     # create the port forwarding rules
     # TODO: only do once
     #port_forwarding_rule = conn.network.create_port_forwarding(
@@ -254,7 +261,7 @@ def main():
         with open("resources/"+template_file, "w") as fp:
             fp.write(output_str)
 
-    # some vars 
+    # some vars
     with open("resources/vars.sh", "w") as fp:
         fp.write("export VLANID_PR=%s\n"%netpr["provider:segmentation_id"])
         fp.write("export VLANID_BM=%s\n"%netbm["provider:segmentation_id"])
