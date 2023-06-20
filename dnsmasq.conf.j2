@@ -1,9 +1,9 @@
 # Set the domain name
-domain=cluster-01.okd.on.massopen.cloud
+domain=ci-01.okd.on.massopen.cloud
 
 server=8.8.8.8
-interface=cluster-01bm
-listen-address=192.168.111.1
+interface=ci-01bm
+listen-address=192.168.112.1
 except-interface=lo
 bind-dynamic
 
@@ -13,8 +13,8 @@ bind-dynamic
 #{% endfor %}
 
 # Add additional DNS entries
-address=/api.cluster-01.okd.on.massopen.cloud/192.168.111.5
-address=/virthost.cluster-01.okd.on.massopen.cloud/192.168.111.1
+address=/api.ci-01.okd.on.massopen.cloud/192.168.112.5
+address=/virthost.ci-01.okd.on.massopen.cloud/192.168.112.1
 
 # Add a wildcard DNS entry
-address=/.apps.cluster-01.okd.on.massopen.cloud/192.168.111.4
+address=/.apps.ci-01.okd.on.massopen.cloud/192.168.112.4

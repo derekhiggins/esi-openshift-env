@@ -1,4 +1,0 @@
-
-ENVFIELD = "envname"
-ROLEFIELD = "role"
-

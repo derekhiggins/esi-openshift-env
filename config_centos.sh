@@ -4,13 +4,13 @@ set -x
 
 . vars.sh
 
-export CLUSTER_NAME="cluster-01"
+export CLUSTER_NAME="ci-01"
 export BASE_DOMAIN="okd.on.massopen.cloud"
 
 
-export IRONIC_LOCAL_IMAGE=quay.io/higginsd/testimage:ironic-image-scos
-
-export OPENSHIFT_RELEASE_IMAGE=quay.io/okd/scos-release:4.13.0-0.okd-scos-2023-05-04-192252
+#export IRONIC_LOCAL_IMAGE=quay.io/higginsd/testimage:ironic-image-scos
+export EXTERNAL_SUBNET=192.168.112.0/24
+export OPENSHIFT_RELEASE_IMAGE=quay.io/okd/scos-release:4.13.0-0.okd-scos-2023-05-25-085822
 export ENABLE_LOCAL_REGISTRY=true
 export IP_STACK=v4
 export BMC_DRIVER=ipmi
