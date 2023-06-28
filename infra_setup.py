@@ -15,11 +15,13 @@ common.ENV_FIELD = "envname"
 common.ROLE_FIELD = "role"
 PROVISION_STATE_AVAILABLE = "available"
 
+# Gets the n'th IP address in a subnet
 def get_ip_address(subnet, index):
     ip_range = ipaddress.IPv4Network(subnet)
     ip_address = str(ip_range[index])
     return ip_address
 
+# Get a FIP, create if it doesn't already exist
 def get_or_create_fip(conn, description):
     floating_ips = conn.network.ips(floating=True)
     for ip in floating_ips:
@@ -30,6 +32,9 @@ def get_or_create_fip(conn, description):
         ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description=description)
     return ip
 
+# Iterates through baremetal nodes, allocating them to be either a provisioning node,
+# master or worker. Also marks the nodes (using extra data) as being part of a env
+# to prevent 2 envs in the same openstack projects from trying to use the same nodes
 def allocate_nodes(conn):
     roles = {"prov": [], "master": [], "worker": []}
 
@@ -60,7 +65,8 @@ def allocate_nodes(conn):
 
     return roles["prov"], roles["master"], roles["worker"]
 
-
+# We need 3 networks/subnets for a env
+# create them here, each subnet has specific properites that need to be set
 def get_or_create_network(conn, name, create=True, network_name=None, subnet_name=None):
     if network_name == None:
         network_name = "net-"+name
@@ -76,7 +82,6 @@ def get_or_create_network(conn, name, create=True, network_name=None, subnet_nam
         if sn["name"] == subnet_name:
             subnet=sn
 
-
     if create:
         if not net:
             net = conn.network.create_network(name=network_name, port_security_enabled=False)
@@ -87,6 +92,7 @@ def get_or_create_network(conn, name, create=True, network_name=None, subnet_nam
                     gateway_ip=get_ip_address(conf.EXTNETWORK, -2), dns_nameservers=[get_ip_address(conf.EXTNETWORK, 1)],
                     allocation_pools=[{"start": get_ip_address(conf.EXTNETWORK, 20), "end": get_ip_address(conf.EXTNETWORK, 100)}])
             elif "pr" in network_name:
+                # DHCP for this network is provided by barmetal-ipi (metal3)
                 subnet = conn.network.create_subnet(name=subnet_name, network_id=net["id"], ip_version=4, cidr="172.22.0.0/24", enable_dhcp=False)
             elif "okd" == network_name:
                 subnet = conn.network.create_subnet(name=subnet_name, network_id=net["id"], ip_version=4, cidr=conf.ACCESSNETWORK, allocation_pools=[{"start": get_ip_address(conf.ACCESSNETWORK, 20), "end": get_ip_address(conf.ACCESSNETWORK, 100)}], dns_nameservers=["8.8.8.8"])
@@ -225,15 +231,23 @@ def main():
     ext_ip_api = get_ip_address(conf.EXTNETWORK, 5)
     ext_ip_gate = get_ip_address(conf.EXTNETWORK, 254)
 
+    # port for the bootstrap VM, MAC address needs to match the MAC used by the provisioning VM in order for it to get a IP over dhcp
     bootstrap_port_name = f"{conf.ENVNAME} BOOTSTRAP"
     if not trunk_ports.get(bootstrap_port_name):
         conn.network.create_port(name=bootstrap_port_name, network_id=netbm["id"], mac_address="52:54:00:B0:07:4F", fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(conf.EXTNETWORK, 101) }])
+
+    # reserving a port for 1st IP on the cluster external network (used by the provisioning host)
     prov_port_name = f"{conf.ENVNAME} PROV"
     if not trunk_ports.get(prov_port_name):
         conn.network.create_port(name=prov_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': ext_ip_prov}])
+
+    # VIP for ingress to the cluster
+    # The cluster floating IP (port 443) will forward to here
     ingress_port_name = f"{conf.ENVNAME} IngressVIP"
     if not trunk_ports.get(ingress_port_name):
         conn.network.create_port(name=ingress_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': ext_ip_ingress}])
+    # VIP for APi access to the cluster
+    # The cluster floating IP (port 6443) will forward to here
     api_port_name = f"{conf.ENVNAME} APIVIP"
     if not trunk_ports.get(api_port_name):
         conn.network.create_port(name=api_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': ext_ip_api}])
