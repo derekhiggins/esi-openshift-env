@@ -8,10 +8,11 @@ from jinja2 import Environment, FileSystemLoader
 
 import openstack
 
+import common
 import conf
 
-ENV_FIELD = "envname"
-ROLE_FIELD = "role"
+common.ENV_FIELD = "envname"
+common.ROLE_FIELD = "role"
 PROVISION_STATE_AVAILABLE = "available"
 
 def get_ip_address(subnet, index):
@@ -29,40 +30,33 @@ def get_or_create_fip(conn, description):
         ip = conn.network.create_ip(floating_network_id="71bdf502-a09f-4f5f-aba2-203fe61189dc", description=description)
     return ip
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("envname", help="name of the environment")
-    return parser.parse_args()
-
 def allocate_nodes(conn):
     roles = {"prov": [], "master": [], "worker": []}
 
     nodes = list(conn.baremetal.nodes(fields=["uuid", "name", "extra", "power_state",
                                    "provision_state"]))
 
-    unallocated_nodes = [node for node in nodes if node.extra.get(ENV_FIELD, "") == ""
+    unallocated_nodes = [node for node in nodes if node.extra.get(common.ENV_FIELD, "") == ""
                                         and node["provision_state"] == PROVISION_STATE_AVAILABLE]
 
-    env_nodes = [node for node in nodes if node.extra.get(ENV_FIELD) == conf.ENVNAME]
+    env_nodes = [node for node in nodes if node.extra.get(common.ENV_FIELD) == conf.ENVNAME]
 
     for node in env_nodes:
-        role = node.extra[ROLE_FIELD]
+        role = node.extra[common.ROLE_FIELD]
         if role in roles:
             roles[role].append(node)
 
     if not roles["prov"]:
         roles["prov"] = unallocated_nodes.pop(0)
         conn.baremetal.update_node(roles["prov"]["uuid"],
-                                   extra={ENV_FIELD: conf.ENVNAME, ROLE_FIELD: "prov"})
+                                   extra={common.ENV_FIELD: conf.ENVNAME, common.ROLE_FIELD: "prov"})
 
     for role, nodes in roles.items():
-        num_needed = {"master": conf.NUM_MASTERS, "worker": conf.NUMWORKERS}.get(role, 1)
+        num_needed = {"master": conf.NUM_MASTERS, "worker": conf.NUM_WORKERS}.get(role, 1)
         for i in range(num_needed - len(nodes)):
             nodes.append(unallocated_nodes.pop(0))
             conn.baremetal.update_node(nodes[-1]["uuid"],
-                               extra={ENV_FIELD: conf.ENVNAME, ROLE_FIELD: role})
-
-    # TODO: provision hosts that are available but not active
+                               extra={common.ENV_FIELD: conf.ENVNAME, common.ROLE_FIELD: role})
 
     return roles["prov"], roles["master"], roles["worker"]
 
@@ -95,8 +89,7 @@ def get_or_create_network(conn, name, create=True, network_name=None, subnet_nam
             elif "pr" in network_name:
                 subnet = conn.network.create_subnet(name=subnet_name, network_id=net["id"], ip_version=4, cidr="172.22.0.0/24", enable_dhcp=False)
             elif "okd" == network_name:
-                ACCESSNETWORK = "192.168.55.0/24"
-                subnet = conn.network.create_subnet(name=subnet_name, network_id=net["id"], ip_version=4, cidr=ACCESSNETWORK, allocation_pools=[{"start": get_ip_address(ACCESSNETWORK, 20), "end": get_ip_address(ACCESSNETWORK, 100)}], dns_nameservers=["8.8.8.8"])
+                subnet = conn.network.create_subnet(name=subnet_name, network_id=net["id"], ip_version=4, cidr=conf.ACCESSNETWORK, allocation_pools=[{"start": get_ip_address(conf.ACCESSNETWORK, 20), "end": get_ip_address(conf.ACCESSNETWORK, 100)}], dns_nameservers=["8.8.8.8"])
     return net, subnet
 
 
@@ -140,7 +133,7 @@ def manage_trunk(conn, bmnode, bmport, netokd, netpr, netbm, trunk_ports):
     native = [netpr["provider:segmentation_id"]]
     tagged = [netbm["provider:segmentation_id"]]
     # TODO: role mightn't be set if new
-    if bmnode.extra.get(ROLE_FIELD) == "prov":
+    if bmnode.extra.get(common.ROLE_FIELD) == "prov":
         trunk_port_name = f"esi-{switch}-{switch_port}-okd-trunk-port"
         native = [netokd["provider:segmentation_id"]]
         tagged = [netpr["provider:segmentation_id"], netbm["provider:segmentation_id"]]
@@ -162,7 +155,7 @@ def manage_trunk(conn, bmnode, bmport, netokd, netpr, netbm, trunk_ports):
 
     if not trunk_port:
         print("Creating ", trunk_port_name)
-        if bmnode.extra.get(ROLE_FIELD) == "prov":
+        if bmnode.extra.get(common.ROLE_FIELD) == "prov":
             create_trunk(trunk_name, "okd", [netpr["name"], netbm["name"]])
         else:
             create_trunk(trunk_name, netpr["name"], [netbm["name"]])
@@ -171,12 +164,10 @@ def manage_trunk(conn, bmnode, bmport, netokd, netpr, netbm, trunk_ports):
 
 
 def main():
-    args = parse_args()
-
     # create a connection object
     conn = openstack.connect(cloud='openstack')
 
-    provisioning_nodes, master_nodes, worker_nodes = allocate_nodes(conn, conf.ENVNAME)
+    provisioning_nodes, master_nodes, worker_nodes = allocate_nodes(conn)
 
     netokd, subnetokd = get_or_create_network(conn, "okd", True, network_name="okd", subnet_name="subnet-okd")
     netpr, subnetpr = get_or_create_network(conn, conf.ENVNAME + "pr")
@@ -209,7 +200,7 @@ def main():
         if bmnode["provision_state"] == PROVISION_STATE_AVAILABLE:
             deploy(bmnode["uuid"], trunk_port_name)
 
-        if bmnode.extra.get(ROLE_FIELD) == "prov":
+        if bmnode.extra.get(common.ROLE_FIELD) == "prov":
             prov_bm_port_name = bm_port_name
             prov_ext_port_name = trunk_port_name
             continue
@@ -229,18 +220,23 @@ def main():
         with open("resources/vlan-over-prov/%s.yaml"%rnode["name"], "w") as fp:
             fp.write(output_str)
 
+    ext_ip_prov = get_ip_address(conf.EXTNETWORK, 1)
+    ext_ip_ingress = get_ip_address(conf.EXTNETWORK, 4)
+    ext_ip_api = get_ip_address(conf.EXTNETWORK, 5)
+    ext_ip_gate = get_ip_address(conf.EXTNETWORK, 254)
+
     bootstrap_port_name = f"{conf.ENVNAME} BOOTSTRAP"
     if not trunk_ports.get(bootstrap_port_name):
         conn.network.create_port(name=bootstrap_port_name, network_id=netbm["id"], mac_address="52:54:00:B0:07:4F", fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(conf.EXTNETWORK, 101) }])
     prov_port_name = f"{conf.ENVNAME} PROV"
     if not trunk_ports.get(prov_port_name):
-        conn.network.create_port(name=prov_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(conf.EXTNETWORK, 1) }])
+        conn.network.create_port(name=prov_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': ext_ip_prov}])
     ingress_port_name = f"{conf.ENVNAME} IngressVIP"
     if not trunk_ports.get(ingress_port_name):
-        conn.network.create_port(name=ingress_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(conf.EXTNETWORK, 4) }])
+        conn.network.create_port(name=ingress_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': ext_ip_ingress}])
     api_port_name = f"{conf.ENVNAME} APIVIP"
     if not trunk_ports.get(api_port_name):
-        conn.network.create_port(name=api_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': get_ip_address(conf.EXTNETWORK, 5) }])
+        conn.network.create_port(name=api_port_name, network_id=netbm["id"], fixed_ips=[{'subnet_id': subnetbm["id"], 'ip_address': ext_ip_api}])
 
     trunk_ports = {port["name"]: port for port in conn.network.ports() if port["name"]}
 
@@ -276,19 +272,29 @@ def main():
         if "A duplicate port forwarding" not in e.details:
             raise
 
+    template_vars = {}
+    template_vars["vlanid_pr"] = netpr["provider:segmentation_id"]
+    template_vars["vlanid_bm"] = netbm["provider:segmentation_id"]
+    template_vars["prov_bm_mac"] = trunk_ports[prov_bm_port_name]["mac_address"]
+    template_vars["num_workers"] = conf.NUM_WORKERS
+    template_vars["external_subnet"] = conf.EXTNETWORK
+    template_vars["ext_ip_prov"] = ext_ip_prov
+    template_vars["ext_ip_ingress"] = ext_ip_ingress
+    template_vars["ext_ip_api"] = ext_ip_api
+    template_vars["ext_ip_gate"] = ext_ip_gate
+    template_vars["release_image"] = conf.OPENSHIFT_RELEASE_IMAGE
+    template_vars["base_domain"] = conf.BASE_DOMAIN
+    template_vars["cluster_name"] = conf.CLUSTER_NAME
+    template_vars["ci_token"] = conf.CI_TOKEN
+    template_vars["prov_fip"] = provip["floating_ip_address"]
+    template_vars["cluster_fip"] = clusterip["floating_ip_address"]
+
     # create some files needed on the provisioning host
-    for content_file in [ 'bm.json', 'dnsmasq.conf']:
+    for content_file in [ 'bm.json', 'dnsmasq.conf', "config_centos.sh"]:
         template = env.get_template(content_file+".j2")
-        output_str = template.render(nodes=rnodes)
+        output_str = template.render(nodes=rnodes, **template_vars)
         with open("resources/"+content_file, "w") as fp:
             fp.write(output_str)
-
-    # some vars
-    with open("resources/vars.sh", "w") as fp:
-        fp.write("export VLANID_PR=%s\n"%netpr["provider:segmentation_id"])
-        fp.write("export VLANID_BM=%s\n"%netbm["provider:segmentation_id"])
-        fp.write("export PROV_BM_MAC=%s\n"%trunk_ports[prov_bm_port_name]["mac_address"])
-        fp.write("export NUM_WORKERS=%s\n"%conf.NUMWORKERS)
 
 if __name__ == "__main__":
     main()

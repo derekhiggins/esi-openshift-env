@@ -5,7 +5,7 @@
       "name": "{{ node['name'] }}",
       "driver": "redfish",
       "resource_class": "baremetal",
-      "driver_info": { "username": "admin", "password": "password", "address": "redfish+http://192.168.112.1:8000/redfish/v1/Systems/{{ node['id'] }}", "deploy_kernel": "http://172.22.0.2/images/ironic-python-agent.kernel", "deploy_ramdisk": "http://172.22.0.2/images/ironic-python-agent.initramfs", "disable_certificate_verification": false },
+      "driver_info": { "username": "admin", "password": "password", "address": "redfish+http://{{ext_ip_prov}}:8000/redfish/v1/Systems/{{ node['id'] }}", "deploy_kernel": "http://172.22.0.2/images/ironic-python-agent.kernel", "deploy_ramdisk": "http://172.22.0.2/images/ironic-python-agent.initramfs", "disable_certificate_verification": false },
       "ports": [
         {
           "address": "{{ node['mac'] }}",

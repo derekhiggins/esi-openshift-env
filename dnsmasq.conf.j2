@@ -1,20 +1,15 @@
 # Set the domain name
-domain=ci-01.okd.on.massopen.cloud
+domain={{cluster_name}}.{{base_domain}}
 
 server=8.8.8.8
-interface=ci-01bm
-listen-address=192.168.112.1
+interface={{cluster_name}}bm
+listen-address={{ext_ip_prov}}
 except-interface=lo
 bind-dynamic
 
-# Assign DNS entries to hosts
-#{% for node in nodes -%}
-#dhcp-host={{node["bmmac"]}},{{node["name"]}}.ostest.test.metalkube.org,{{node["ip"]}}
-#{% endfor %}
-
 # Add additional DNS entries
-address=/api.ci-01.okd.on.massopen.cloud/192.168.112.5
-address=/virthost.ci-01.okd.on.massopen.cloud/192.168.112.1
+address=/api.ci-01.okd.on.massopen.cloud/{{ext_ip_api}}
+address=/virthost.ci-01.okd.on.massopen.cloud/{{ext_ip_api}}
 
 # Add a wildcard DNS entry
-address=/.apps.ci-01.okd.on.massopen.cloud/192.168.112.4
+address=/.apps.ci-01.okd.on.massopen.cloud/{{ext_ip_ingress}}

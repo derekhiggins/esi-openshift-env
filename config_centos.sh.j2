@@ -1,0 +1,33 @@
+set +x
+export CI_TOKEN='{{ci_token}}'
+set -x
+
+export CLUSTER_NAME={{cluster_name}}
+export BASE_DOMAIN={{base_domain}}
+export NUM_WORKERS={{num_workers}}
+
+
+export EXTERNAL_SUBNET={{external_subnet}}
+export OPENSHIFT_RELEASE_IMAGE={{release_image}}
+export ENABLE_LOCAL_REGISTRY=true
+export IP_STACK=v4
+export NETWORK_CONFIG_FOLDER=/home/centos/dev-scripts/network-configs/vlan-over-prov
+
+export NODES_FILE="/home/centos/dev-scripts/bm.json"
+export NODES_PLATFORM=baremetal
+export MANAGE_BR_BRIDGE=n
+export MANAGE_INT_BRIDGE=n
+export CLUSTER_PRO_IF="eno1"
+export EXTERNAL_BOOTSTRAP_MAC=52:54:00:B0:07:4F
+
+export PRO_IF="eth0.{{vlanid_pr}}"
+export INT_IF="eth0.{{vlanid_bm}}"
+
+# Not dev-scripts
+export PROV_BM_MAC={{prov_bm_mac}}
+export PROV_BM_IP={{ext_ip_prov}}
+export PROV_BM_GATE={{ext_ip_gate}}
+export VLANID_PR={{vlanid_pr}}
+export VLANID_BM={{vlanid_bm}}
+export PROV_FIP={{prov_fip}}
+export CLUSTER_FIP={{cluster_fip}}
