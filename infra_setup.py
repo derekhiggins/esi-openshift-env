@@ -317,11 +317,15 @@ def main():
     template_vars["cluster_fip"] = clusterip["floating_ip_address"]
 
     # create some files needed on the provisioning host
-    for content_file in [ 'bm.json', 'dnsmasq.conf', "config_centos.sh"]:
+    for content_file in [ 'bm.json', 'dnsmasq.conf', "config_centos.sh", "cir_data.json"]:
         template = env.get_template(content_file+".j2")
         output_str = template.render(nodes=rnodes, **template_vars)
         with open("resources/"+content_file, "w") as fp:
             fp.write(output_str)
 
+    with open("resources/cir_data.json") as fp:
+        extra = provisioning_nodes[0].extra
+        extra.update({"ofcir_data": fp.read(), "ofcir_ip":provip["floating_ip_address"], "ofcir_type":"cluster"})
+        conn.baremetal.update_node(provisioning_nodes[0]["uuid"], extra=extra)
 if __name__ == "__main__":
     main()
