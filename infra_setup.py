@@ -267,6 +267,19 @@ def main():
         if "A duplicate port forwarding" not in e.details:
             raise
 
+    # create the port forwarding rule for ssh access to the provisioning node
+    try:
+        port_forwarding_rule = conn.network.create_port_forwarding(
+            floatingip_id=provip["id"],
+            internal_port_id=trunk_ports[prov_ext_port_name]["id"],
+            internal_ip_address=trunk_ports[prov_ext_port_name]["fixed_ips"][0]["ip_address"],
+            internal_port='8213', external_port='8213', protocol='tcp'
+        )
+    except openstack.exceptions.BadRequestException as e:
+        if "A duplicate port forwarding" not in e.details:
+            raise
+
+
     clusterip = get_or_create_fip(conn, "{conf.ENVNAME} cluster access")
     # create the port forwarding rules cluster access
     try:
