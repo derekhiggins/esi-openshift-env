@@ -222,6 +222,7 @@ def main():
         template = env.get_template('netconfig.yaml.j2')
         if not trunk_ports.get(bm_port_name):
             trunk_ports = {port["name"]: port for port in conn.network.ports() if port["name"]}
+        rnode["bmmac"] = trunk_ports[bm_port_name]["mac_address"]
         output_str = template.render(bmvlanid=netbm["provider:segmentation_id"], bmmac=trunk_ports[bm_port_name]["mac_address"])
         with open("resources/vlan-over-prov/%s.yaml"%rnode["name"], "w") as fp:
             fp.write(output_str)
@@ -303,6 +304,7 @@ def main():
     template_vars["vlanid_pr"] = netpr["provider:segmentation_id"]
     template_vars["vlanid_bm"] = netbm["provider:segmentation_id"]
     template_vars["prov_bm_mac"] = trunk_ports[prov_bm_port_name]["mac_address"]
+    template_vars["prov_host_ip"] = trunk_ports[prov_ext_port_name]["fixed_ips"][0]["ip_address"]
     template_vars["num_workers"] = conf.NUM_WORKERS
     template_vars["external_subnet"] = conf.EXTNETWORK
     template_vars["ext_ip_prov"] = ext_ip_prov
@@ -325,7 +327,7 @@ def main():
 
     with open("resources/cir_data.json") as fp:
         extra = provisioning_nodes[0].extra
-        extra.update({"ofcir_data": fp.read(), "ofcir_ip":provip["floating_ip_address"], "ofcir_type":"cluster"})
+        extra.update({"ofcir_data": fp.read(), "ofcir_ip":provip["floating_ip_address"], "ofcir_type":"cluster_moc"})
         conn.baremetal.update_node(provisioning_nodes[0]["uuid"], extra=extra)
 if __name__ == "__main__":
     main()
